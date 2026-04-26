@@ -1,0 +1,79 @@
+---
+title: "How Spark Handles Lazy Evaluation"
+description: "A visual guide to understanding Spark's execution model — why nothing happens until you call an action."
+category: spark
+publishedAt: "2026-05-01"
+author: "DataViz Academy"
+tags: ["spark", "lazy-evaluation", "DAG", "beginner"]
+---
+
+# How Spark Handles Lazy Evaluation
+
+When you write PySpark code, something counterintuitive happens: **most of your code doesn't actually execute when you run it**. Spark uses a concept called **lazy evaluation** — it builds up a plan of what to do, but only executes when absolutely necessary.
+
+## Why Lazy Evaluation?
+
+Lazy evaluation gives Spark two superpowers:
+
+1. **Optimization** — By seeing the full plan before executing, Spark's Catalyst optimizer can rearrange, combine, and eliminate steps for maximum efficiency.
+2. **Fault tolerance** — If a node fails, Spark can re-derive data by replaying the plan from the last checkpoint.
+
+## Transformations vs. Actions
+
+In Spark, operations fall into two categories:
+
+| Type | What It Does | Example | Executes? |
+|------|-------------|---------|-----------|
+| **Transformation** | Defines a new DataFrame from an existing one | `.filter()`, `.groupBy()`, `.join()` | ❌ No (lazy) |
+| **Action** | Triggers computation and returns a result | `.count()`, `.collect()`, `.write()` | ✅ Yes |
+
+## The Code
+
+```python
+# Step 1: Read data (TRANSFORMATION — nothing happens yet)
+df = spark.read.csv("employees.csv", header=True, inferSchema=True)
+
+# Step 2: Filter rows (TRANSFORMATION — still nothing)
+df_filtered = df.filter(df.age > 25)
+
+# Step 3: Group by department (TRANSFORMATION — building the plan...)
+df_grouped = df_filtered.groupBy("department")
+
+# Step 4: Count per group (ACTION! — NOW Spark executes everything above)
+result = df_grouped.count()
+result.show()
+```
+
+> 💡 **Key insight**: Steps 1–3 only build the logical plan. Spark doesn't touch your CSV file until Step 4 calls `.count()` — that's when the entire pipeline fires.
+
+## What Happens Under the Hood
+
+When the action is triggered, Spark:
+
+1. **Builds the Logical Plan** — A tree of the transformations you defined
+2. **Optimizes via Catalyst** — Pushes filters down, prunes columns, folds constants
+3. **Creates the Physical Plan** — Decides how to distribute work across the cluster
+4. **Generates RDD DAG** — Breaks the plan into stages separated by shuffles
+5. **Executes** — Distributes tasks to executors and collects results
+
+## When to Use This Knowledge
+
+Understanding lazy evaluation helps you:
+
+- **Avoid premature `.collect()` calls** that force execution on incomplete plans
+- **Chain transformations** confidently knowing they're free until an action triggers them
+- **Debug performance** by reading the query plan (`df.explain()`) before executing
+- **Design efficient pipelines** that let Spark optimize the full chain
+
+## Try It Yourself
+
+```python
+# See Spark's plan WITHOUT executing
+df_filtered.explain(True)
+
+# Output shows: Logical Plan → Optimized Plan → Physical Plan
+```
+
+---
+
+*Next up: [How Spark Shuffles Data](/articles/spark-shuffle-deep-dive) — understanding the most expensive operation in distributed computing.*

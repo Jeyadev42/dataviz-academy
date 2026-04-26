@@ -1,0 +1,108 @@
+---
+title: "The Medallion Architecture Explained"
+description: "Bronze, Silver, Gold — understand the layered data lakehouse pattern through visual diagrams."
+category: pipelines
+publishedAt: "2026-05-02"
+author: "DataViz Academy"
+tags: ["data-lakehouse", "medallion", "architecture", "beginner"]
+---
+
+# The Medallion Architecture Explained
+
+The **Medallion Architecture** (also called multi-hop architecture) is a design pattern for organizing data in a lakehouse. It structures your data into three layers — each progressively cleaner and more business-ready.
+
+## The Three Layers
+
+### 🥉 Bronze Layer — Raw Ingestion
+
+The Bronze layer is your **landing zone**. Data arrives here in its original format, untouched.
+
+- **What goes here**: Raw JSON from APIs, CSV extracts, CDC logs, streaming events
+- **Quality**: Low — duplicates, nulls, schema drift all accepted
+- **Schema**: Append-only, often schema-on-read
+- **Retention**: Long (months to years) for auditability
+
+```python
+# Bronze: Ingest raw data as-is
+bronze_df = (
+    spark.readStream
+    .format("cloudFiles")
+    .option("cloudFiles.format", "json")
+    .load("/mnt/landing/orders/")
+)
+
+bronze_df.writeStream \
+    .format("delta") \
+    .outputMode("append") \
+    .toTable("bronze.raw_orders")
+```
+
+### 🥈 Silver Layer — Cleaned & Conformed
+
+The Silver layer applies **quality rules** and **standardization**.
+
+- **What happens here**: Deduplication, type casting, null handling, joining reference data
+- **Quality**: Medium-high — validated, consistent, queryable
+- **Schema**: Enforced, normalized or lightly denormalized
+
+```python
+# Silver: Clean and standardize
+silver_df = (
+    spark.readStream.table("bronze.raw_orders")
+    .dropDuplicates(["order_id"])
+    .withColumn("order_date", to_date("order_date_str", "yyyy-MM-dd"))
+    .filter(col("order_id").isNotNull())
+    .join(dim_customers, "customer_id", "left")
+)
+
+silver_df.writeStream \
+    .format("delta") \
+    .outputMode("append") \
+    .toTable("silver.orders")
+```
+
+### 🥇 Gold Layer — Business-Ready Aggregates
+
+The Gold layer contains **purpose-built** datasets optimized for consumption.
+
+- **What goes here**: Aggregated metrics, feature tables, reporting datasets
+- **Quality**: Highest — business logic applied, documented, governed
+- **Consumers**: BI dashboards, ML models, APIs
+
+```python
+# Gold: Aggregate for business use
+gold_df = (
+    spark.read.table("silver.orders")
+    .groupBy("region", "product_category", "order_month")
+    .agg(
+        sum("revenue").alias("total_revenue"),
+        countDistinct("customer_id").alias("unique_customers"),
+        avg("order_value").alias("avg_order_value")
+    )
+)
+
+gold_df.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .saveAsTable("gold.monthly_revenue_summary")
+```
+
+## Key Design Principles
+
+| Principle | Description |
+|-----------|-------------|
+| **Incremental processing** | Each layer processes only new/changed data using Delta's change data feed |
+| **Idempotency** | Re-running any layer produces the same result |
+| **Schema enforcement** | Silver and Gold layers reject malformed data |
+| **Lineage** | Every Gold table traces back to its Bronze source |
+| **Isolation** | Raw data is never modified — Bronze is your "source of truth" |
+
+## When to Use Medallion
+
+✅ **Use when**: You have multiple data sources, need auditability, or serve diverse consumers (analysts, ML engineers, applications)
+
+❌ **Skip when**: You have a single, clean data source with one consumer — a simple ETL pipeline is sufficient
+
+---
+
+*Next up: [CDC Patterns in Data Pipelines](/articles/cdc-patterns) — capturing and processing change data efficiently.*
